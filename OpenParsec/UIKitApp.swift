@@ -96,22 +96,9 @@ final class ParsecAPIClient {
 
 final class SessionStore {
     private let key = GLBDataModel.shared.SessionKeyChainKey
-    private let service = Bundle.main.bundleIdentifier ?? "OpenParsec"
 
     func load() -> ClientInfo? {
-        if let info = load(service: service) { return info }
-        // Migrate sessions written by the legacy SwiftUI client, which did not
-        // include kSecAttrService in its Keychain query.
-        if let info = load(service: nil) {
-            save(info)
-            SecItemDelete(baseQuery(service: nil) as CFDictionary)
-            return info
-        }
-        return nil
-    }
-
-    private func load(service: String?) -> ClientInfo? {
-        var query = baseQuery(service: service)
+        var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -122,27 +109,23 @@ final class SessionStore {
     @discardableResult
     func save(_ info: ClientInfo) -> Bool {
         guard let data = try? JSONEncoder().encode(info) else { return false }
-        let query = baseQuery(service: service)
-        let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let query = baseQuery()
+        let attributes: [String: Any] = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecItemNotFound {
             var insert = query
             insert[kSecValueData as String] = data
-            insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
         }
         return updateStatus == errSecSuccess
     }
 
     func clear() {
-        SecItemDelete(baseQuery(service: service) as CFDictionary)
-        SecItemDelete(baseQuery(service: nil) as CFDictionary)
+        SecItemDelete(baseQuery() as CFDictionary)
     }
 
-    private func baseQuery(service: String?) -> [String: Any] {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
-        if let service = service { query[kSecAttrService as String] = service }
-        return query
+    private func baseQuery() -> [String: Any] {
+        return [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
     }
 }
 
