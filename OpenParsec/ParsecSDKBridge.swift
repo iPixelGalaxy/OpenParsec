@@ -138,9 +138,11 @@ class ParsecSDKBridge: ParsecService {
 		let ans = ParsecClientGetStatus(_parsec, &pcs)
 		self.hostHeight = Float(pcs.decoder.0.height)
 		self.hostWidth = Float(pcs.decoder.0.width)
+		let decoderWidth = Int(pcs.decoder.0.width)
+		let decoderHeight = Int(pcs.decoder.0.height)
 		DispatchQueue.main.async {
-			DataManager.model.decoderWidth = Int(pcs.decoder.0.width)
-			DataManager.model.decoderHeight = Int(pcs.decoder.0.height)
+			DataManager.model.decoderWidth = decoderWidth
+			DataManager.model.decoderHeight = decoderHeight
 		}
 
 		return ans
