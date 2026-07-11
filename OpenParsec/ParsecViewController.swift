@@ -9,12 +9,22 @@ protocol ParsecPlayground {
 	func updateSize(width: CGFloat, height: CGFloat)
 }
 
+final class CompanionCursorView: UIView {
+    override var isOpaque: Bool { return false }
+    override func draw(_ rect: CGRect) {
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 2, y: 2)); path.addLine(to: CGPoint(x: 2, y: 29)); path.addLine(to: CGPoint(x: 10, y: 22)); path.addLine(to: CGPoint(x: 16, y: 34)); path.addLine(to: CGPoint(x: 22, y: 31)); path.addLine(to: CGPoint(x: 16, y: 20)); path.addLine(to: CGPoint(x: 28, y: 20)); path.close()
+        UIColor.white.setFill(); UIColor.black.setStroke(); path.lineWidth = 2; path.fill(); path.stroke()
+    }
+}
+
 class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	var glkView: ParsecPlayground!
 	var gamePadController: GamepadController!
 	var touchController: TouchController!
 	var u: UIImageView?
 	var lastImg: CGImage?
+	var companionCursorView: CompanionCursorView?
     var lastMouseX: Int32 = -1
     var lastMouseY: Int32 = -1
     var lastCursorHidden: Bool = false
@@ -63,7 +73,8 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	}
 
 	func updateImage() {
-		if CompanionRuntime.cursorCaptured { u?.image = nil; return }
+		if CompanionRuntime.cursorState == .companion { u?.image = nil; companionCursorView?.isHidden = false; return }
+		companionCursorView?.isHidden = true
         // Optimization: Snap current valus
         let currentMouseX = CParsec.mouseInfo.mouseX
         let currentMouseY = CParsec.mouseInfo.mouseY
@@ -212,6 +223,12 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 
 		u = UIImageView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
 		contentView.addSubview(u!) // Add Cursor to ContentView
+		companionCursorView = CompanionCursorView(frame: CGRect(x: 0, y: 0, width: 36, height: 36))
+		companionCursorView?.backgroundColor = .clear
+		companionCursorView?.isHidden = true
+		contentView.addSubview(companionCursorView!)
+		NotificationCenter.default.addObserver(self, selector: #selector(companionCursorMoved(_:)), name: .companionCursorDidMove, object: nil)
+		NotificationCenter.default.addObserver(self, selector: #selector(companionCursorUnavailable), name: .companionCursorUnavailable, object: nil)
         if #available(iOS 14.0, *) { setNeedsUpdateOfPrefersPointerLocked() }
         if #available(iOS 13.4, *) {
             let pointerInteraction = UIPointerInteraction(delegate: self)
@@ -272,6 +289,23 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 
 	}
 
+	@objc private func companionCursorMoved(_ notification: Notification) {
+		guard let event = notification.object as? CompanionCursorEvent, event.visible, contentView != nil else { companionCursorView?.isHidden = true; return }
+		let x = CGFloat(max(0, min(1, event.x))) * contentView.bounds.width
+		let y = CGFloat(max(0, min(1, event.y))) * contentView.bounds.height
+		companionCursorView?.frame = CGRect(x: x - 2, y: y - 2, width: 36, height: 36)
+		companionCursorView?.isHidden = false
+		u?.image = nil
+	}
+
+	@objc private func companionCursorUnavailable() {
+		companionCursorView?.isHidden = true
+		lastMouseX = -1; lastMouseY = -1; lastImg = nil
+		updateImage()
+	}
+
+	deinit { NotificationCenter.default.removeObserver(self) }
+
 	override func viewDidLayoutSubviews() {
 		super.viewDidLayoutSubviews()
 		layoutStream()
@@ -318,6 +352,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 			lastSDKFrameScale = nativeScale
 			CParsec.setFrame(rendered.width, rendered.height, nativeScale)
 		}
+		if let event = CompanionRuntime.lastEvent, CompanionRuntime.cursorState == .companion { companionCursorMoved(Notification(name: .companionCursorDidMove, object: event)) }
 	}
 
 	override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {

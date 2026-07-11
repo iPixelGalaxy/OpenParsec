@@ -526,7 +526,9 @@ final class StreamViewController: BaseViewController {
         let decoderName = String.fromBuffer(&decoder.name.0, length: 16).trimmingCharacters(in: .controlCharacters)
         let metric = current.`self`.metrics.0
         let feedback = DataManager.model.resolutionFeedback.map { "\n\($0)" } ?? ""
-        metrics.text = String(format: "Decode %.2f ms  Encode %.2f ms\nNetwork %.2f ms  %.2f Mbps\nQueue %u  Retransmit %u/%u\nActual %d x %d %@ %@\n%@%@", metric.decodeLatency, metric.encodeLatency, metric.networkLatency, metric.bitrate, metric.queuedFrames, metric.fastRTs, metric.slowRTs, decoder.width, decoder.height, decoder.h265 ? "H.265" : "H.264", decoderName, adaptiveQuality.stateText, feedback)
+        let cursorStatus: String
+        switch CompanionRuntime.cursorState { case .sdk: cursorStatus = "SDK"; case .waiting: cursorStatus = "Companion waiting"; case .companion: let age = CompanionRuntime.lastEvent.map { max(0, Date().timeIntervalSince1970 - $0.timestamp) } ?? 0; cursorStatus = String(format: "Companion %.1fs", age) }
+        metrics.text = String(format: "Decode %.2f ms  Encode %.2f ms\nNetwork %.2f ms  %.2f Mbps\nQueue %u  Retransmit %u/%u\nActual %d x %d %@ %@\nCursor: %@\n%@%@", metric.decodeLatency, metric.encodeLatency, metric.networkLatency, metric.bitrate, metric.queuedFrames, metric.fastRTs, metric.slowRTs, decoder.width, decoder.height, decoder.h265 ? "H.265" : "H.264", decoderName, cursorStatus, adaptiveQuality.stateText, feedback)
     }
     @objc private func checkStatus() {
         var status = ParsecClientStatus(); let value = CParsec.getStatusEx(&status)

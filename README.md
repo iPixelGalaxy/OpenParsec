@@ -9,7 +9,9 @@ macOS does not allow a Parsec client to change the captured display resolution, 
 1. Download `OpenParsecHost.zip`, move the app to Applications, and open it. If Gatekeeper blocks the ad-hoc build, right-click the app and choose Open.
 2. Keep the iPad and Mac on the same local network. Prefer 5 GHz Wi-Fi or connect the Mac by Ethernet.
 3. In OpenParsec's host list, tap **Pair Mac**, then enter the six-digit code shown in the Mac menu-bar item.
-4. Connect normally. The companion selects a real low-resolution 60 Hz Mac display mode before Parsec starts and draws a capture-visible cursor for movement originating on either device.
+4. In iPad Settings, leave **Mac Companion Cursor** enabled and connect normally. The companion selects a real low-resolution 60 Hz Mac display mode before Parsec starts and streams cursor coordinates directly to the iPad.
+
+The iPad-rendered companion cursor is the reliable default and does not depend on Parsec including the macOS hardware cursor in its video. The Mac menu also provides **Show captured overlay** and **Test captured overlay** as compatibility/diagnostic options. Stream metrics report `Cursor: Companion` after the first coordinate event; until then, OpenParsec keeps using the SDK cursor instead of hiding it.
 
 The first-generation iPad Air profile starts with H.264 hardware decoding, 1920×1200, 60 FPS, and 10 Mbps. It samples decode, encode, queue, retransmission, and network metrics, reducing bitrate or resolution when the 60 FPS frame budget cannot be maintained. The optimized Mac display mode remains active after disconnect; use the companion menu to restore the original Retina mode manually.
 

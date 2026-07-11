@@ -1,6 +1,21 @@
 import Foundation
 
-enum CompanionRuntime { static var cursorCaptured = false }
+enum CompanionCursorState { case sdk, waiting, companion }
+enum CompanionRuntime {
+    static var cursorState: CompanionCursorState = .sdk
+    static var lastEvent: CompanionCursorEvent?
+}
+
+struct CompanionCursorEvent: Codable {
+    let type: String
+    let sequence: UInt64
+    let x: Double
+    let y: Double
+    let displayWidth: Int
+    let displayHeight: Int
+    let visible: Bool
+    let timestamp: TimeInterval
+}
 
 struct CompanionMode: Codable {
     let width: Int
@@ -9,6 +24,7 @@ struct CompanionMode: Codable {
 }
 
 private struct CompanionResponse: Codable {
+    let type: String? = nil
     let ok: Bool
     let error: String?
     let token: String?
@@ -23,12 +39,20 @@ final class CompanionClient: NSObject, NetServiceBrowserDelegate, NetServiceDele
     private var input: InputStream?, output: OutputStream?, buffer = Data()
     private var outgoing = Data()
     private var pending: ((CompanionResponse) -> Void)?
+    private var livenessTimer: Timer?
     private(set) var discoveredName: String?
     private let tokenKey = "OpenParsecCompanionToken"
     private var token: String? { get { UserDefaults.standard.string(forKey: tokenKey) } set { UserDefaults.standard.set(newValue, forKey: tokenKey) } }
     var isPaired: Bool { return token != nil }
 
-    override init() { super.init(); browser.delegate = self; browser.searchForServices(ofType: "_openparsec._tcp.", inDomain: "local.") }
+    override init() {
+        super.init(); browser.delegate = self; browser.searchForServices(ofType: "_openparsec._tcp.", inDomain: "local.")
+        livenessTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            guard CompanionRuntime.cursorState == .companion, let event = CompanionRuntime.lastEvent, Date().timeIntervalSince1970 - event.timestamp > 2.5 else { return }
+            CompanionRuntime.cursorState = .sdk
+            NotificationCenter.default.post(name: .companionCursorUnavailable, object: nil)
+        }
+    }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
         guard !services.contains(where: { $0.name == service.name }) else { return }
@@ -44,15 +68,23 @@ final class CompanionClient: NSObject, NetServiceBrowserDelegate, NetServiceDele
     }
 
     func prepareLegacyMode(completion: @escaping () -> Void) {
-        CompanionRuntime.cursorCaptured = false
+        CompanionRuntime.cursorState = .sdk
         guard isPaired else { completion(); return }
         command(type: "setMode", extra: ["width": 1920, "height": 1200]) { [weak self] response in
-            if response.ok { self?.setCursorEnabled(SettingsHandler.companionCursorEnabled) }; completion()
+            guard response.ok, SettingsHandler.companionCursorEnabled else { completion(); return }
+            self?.subscribeCursor { _ in completion() }
         }
     }
 
     func setMode(width: Int, height: Int, completion: ((Bool) -> Void)? = nil) { command(type: "setMode", extra: ["width": width, "height": height]) { completion?($0.ok) } }
-    func setCursorEnabled(_ enabled: Bool) { command(type: "cursor", extra: ["enabled": enabled]) { response in CompanionRuntime.cursorCaptured = response.ok && enabled } }
+    func setCursorEnabled(_ enabled: Bool) { if enabled { subscribeCursor { _ in } } else { command(type: "unsubscribeCursor", extra: [:]) { _ in CompanionRuntime.cursorState = .sdk; NotificationCenter.default.post(name: .companionCursorUnavailable, object: nil) } } }
+    private func subscribeCursor(completion: @escaping (Bool) -> Void) {
+        CompanionRuntime.cursorState = .waiting
+        command(type: "subscribeCursor", extra: [:]) { response in
+            if !response.ok { CompanionRuntime.cursorState = .sdk; NotificationCenter.default.post(name: .companionCursorUnavailable, object: nil) }
+            completion(response.ok)
+        }
+    }
 
     private func command(type: String, extra: [String: Any], completion: @escaping (CompanionResponse) -> Void) {
         guard let token = token else { return completion(CompanionResponse(ok: false, error: "Not paired", token: nil, modes: nil, current: nil, cursorEnabled: nil)) }
@@ -92,8 +124,16 @@ final class CompanionClient: NSObject, NetServiceBrowserDelegate, NetServiceDele
     private func consumeLines() {
         while let newline = buffer.firstIndex(of: 10) {
             let line = buffer.prefix(upTo: newline); buffer.removeSubrange(...newline)
-            if let response = try? JSONDecoder().decode(CompanionResponse.self, from: line) { let callback = pending; pending = nil; callback?(response) }
+            if let raw = try? JSONSerialization.jsonObject(with: Data(line)), let object = raw as? [String: Any], object["type"] as? String == "cursorPosition", let event = try? JSONDecoder().decode(CompanionCursorEvent.self, from: Data(line)) {
+                CompanionRuntime.lastEvent = event; CompanionRuntime.cursorState = .companion
+                NotificationCenter.default.post(name: .companionCursorDidMove, object: event)
+            } else if let response = try? JSONDecoder().decode(CompanionResponse.self, from: Data(line)) { let callback = pending; pending = nil; callback?(response) }
         }
     }
-    private func closeStreams() { input?.close(); output?.close(); input = nil; output = nil; buffer.removeAll(); outgoing.removeAll(); pending = nil }
+    private func closeStreams() { input?.close(); output?.close(); input = nil; output = nil; buffer.removeAll(); outgoing.removeAll(); pending = nil; CompanionRuntime.cursorState = .sdk; NotificationCenter.default.post(name: .companionCursorUnavailable, object: nil) }
+}
+
+extension Notification.Name {
+    static let companionCursorDidMove = Notification.Name("CompanionCursorDidMove")
+    static let companionCursorUnavailable = Notification.Name("CompanionCursorUnavailable")
 }

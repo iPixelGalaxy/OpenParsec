@@ -20,12 +20,24 @@ private struct Request: Decodable {
 }
 
 private struct Response: Encodable {
+    let type: String = "response"
     let ok: Bool
     let error: String?
     let token: String?
     let modes: [DisplayMode]?
     let current: DisplayMode?
     let cursorEnabled: Bool?
+}
+
+private struct CursorEvent: Encodable {
+    let type = "cursorPosition"
+    let sequence: UInt64
+    let x: Double
+    let y: Double
+    let displayWidth: Int
+    let displayHeight: Int
+    let visible: Bool
+    let timestamp: TimeInterval
 }
 
 final class CursorView: NSView {
@@ -41,24 +53,50 @@ final class CursorView: NSView {
 final class CursorOverlay {
     private let panel: NSPanel
     private var timer: Timer?
-    var enabled = true { didSet { enabled ? start() : stop() } }
+    var enabled = false { didSet { enabled ? panel.orderFrontRegardless() : panel.orderOut(nil) } }
+    var onPosition: ((Double, Double, Int, Int) -> Void)?
+    private var lastPoint = NSPoint(x: -1, y: -1)
+    private var lastSent: TimeInterval = 0
+    private var testStarted: TimeInterval?
 
     init() {
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 36, height: 36), styleMask: .borderless, backing: .buffered, defer: false)
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 48, height: 48), styleMask: .borderless, backing: .buffered, defer: false)
         panel.backgroundColor = .clear; panel.isOpaque = false; panel.hasShadow = false; panel.ignoresMouseEvents = true
-        panel.level = .screenSaver; panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.contentView = CursorView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 36, height: 36))
-        start()
+        panel.level = .floating; panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.sharingType = .readOnly; panel.hidesOnDeactivate = false; panel.animationBehavior = .none
+        panel.contentView = CursorView(frame: NSRect(x: 0, y: 0, width: 48, height: 48))
+        start(); panel.orderOut(nil)
     }
 
     private func start() {
-        guard timer == nil else { return }; panel.orderFrontRegardless()
+        guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            let point = NSEvent.mouseLocation
-            self?.panel.setFrameOrigin(NSPoint(x: point.x - 2, y: point.y - 33))
+            self?.tick()
         }
     }
-    private func stop() { timer?.invalidate(); timer = nil; panel.orderOut(nil) }
+    private func tick() {
+        let now = Date.timeIntervalSinceReferenceDate
+        var point = NSEvent.mouseLocation
+        if let started = testStarted {
+            let elapsed = now - started
+            if elapsed >= 4 { testStarted = nil; if !enabled { panel.orderOut(nil) } }
+            else if let screen = NSScreen.main {
+                let positions = [NSPoint(x: screen.frame.midX, y: screen.frame.midY), NSPoint(x: screen.frame.minX + 30, y: screen.frame.maxY - 30), NSPoint(x: screen.frame.maxX - 30, y: screen.frame.maxY - 30), NSPoint(x: screen.frame.maxX - 30, y: screen.frame.minY + 30)]
+                point = positions[min(Int(elapsed), positions.count - 1)]
+            }
+        }
+        if enabled || testStarted != nil { panel.orderFrontRegardless(); panel.setFrameOrigin(NSPoint(x: point.x - 2, y: point.y - 33)) }
+        guard point != lastPoint || now - lastSent >= 1 else { return }
+        lastPoint = point; lastSent = now
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) ?? NSScreen.main else { return }
+        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        let mode = number.flatMap { CGDisplayCopyDisplayMode(CGDirectDisplayID($0.uint32Value)) }
+        let pixelWidth = mode?.pixelWidth ?? Int(screen.frame.width), pixelHeight = mode?.pixelHeight ?? Int(screen.frame.height)
+        let x = max(0, min(1, Double((point.x - screen.frame.minX) / screen.frame.width)))
+        let y = max(0, min(1, Double((screen.frame.maxY - point.y) / screen.frame.height)))
+        onPosition?(x, y, pixelWidth, pixelHeight)
+    }
+    func test() { testStarted = Date.timeIntervalSinceReferenceDate; panel.orderFrontRegardless() }
 }
 
 final class DisplayController {
@@ -101,11 +139,14 @@ final class CompanionServer {
     private let pairingCode: String
     private var token: String
     private var listener: NWListener?
+    private var subscribers: [ObjectIdentifier: NWConnection] = [:]
+    private var sequence: UInt64 = 0
 
     init(display: DisplayController, cursor: CursorOverlay, pairingCode: String) {
         self.display = display; self.cursor = cursor; self.pairingCode = pairingCode
         token = UserDefaults.standard.string(forKey: "CompanionToken") ?? UUID().uuidString
         UserDefaults.standard.set(token, forKey: "CompanionToken")
+        cursor.onPosition = { [weak self] x, y, width, height in self?.broadcastCursor(x: x, y: y, width: width, height: height) }
     }
 
     func start() throws {
@@ -123,7 +164,7 @@ final class CompanionServer {
                 let line = pending.prefix(upTo: newline); pending.removeSubrange(...newline)
                 if let request = try? JSONDecoder().decode(Request.self, from: line) { self?.handle(request, connection: connection) }
             }
-            if !complete { self?.receive(connection, buffer: pending) }
+            if !complete { self?.receive(connection, buffer: pending) } else { self?.subscribers.removeValue(forKey: ObjectIdentifier(connection)) }
         }
     }
 
@@ -139,9 +180,18 @@ final class CompanionServer {
             let ok = request.width.flatMap { width in request.height.map { display.set(width: width, height: $0) } } ?? false
             send(Response(ok: ok, error: ok ? nil : "Unsupported display mode", token: nil, modes: nil, current: display.current(), cursorEnabled: cursor.enabled), to: connection)
         case "cursor": cursor.enabled = request.enabled ?? true; send(Response(ok: true, error: nil, token: nil, modes: nil, current: display.current(), cursorEnabled: cursor.enabled), to: connection)
+        case "subscribeCursor": subscribers[ObjectIdentifier(connection)] = connection; send(Response(ok: true, error: nil, token: nil, modes: nil, current: display.current(), cursorEnabled: cursor.enabled), to: connection)
+        case "unsubscribeCursor": subscribers.removeValue(forKey: ObjectIdentifier(connection)); send(Response(ok: true, error: nil, token: nil, modes: nil, current: display.current(), cursorEnabled: cursor.enabled), to: connection)
         case "restore": let ok = display.restore(); send(Response(ok: ok, error: ok ? nil : "Unable to restore display mode", token: nil, modes: nil, current: display.current(), cursorEnabled: cursor.enabled), to: connection)
         default: send(Response(ok: false, error: "Unknown command", token: nil, modes: nil, current: nil, cursorEnabled: nil), to: connection)
         }
+    }
+
+    private func broadcastCursor(x: Double, y: Double, width: Int, height: Int) {
+        sequence &+= 1
+        let event = CursorEvent(sequence: sequence, x: x, y: y, displayWidth: width, displayHeight: height, visible: true, timestamp: Date().timeIntervalSince1970)
+        guard var data = try? JSONEncoder().encode(event) else { return }; data.append(10)
+        for connection in subscribers.values { connection.send(content: data, completion: .contentProcessed { _ in }) }
     }
 
     private func send(_ response: Response, to connection: NWConnection) {
@@ -165,12 +215,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu(); menu.addItem(withTitle: "Pairing code: \(pairingCode)", action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Current: \(display.current()?.title ?? "Unknown")", action: nil, keyEquivalent: "")
-        let cursorItem = menu.addItem(withTitle: cursor.enabled ? "Hide stream cursor" : "Show stream cursor", action: #selector(toggleCursor), keyEquivalent: ""); cursorItem.target = self
+        let cursorItem = menu.addItem(withTitle: cursor.enabled ? "Hide captured overlay" : "Show captured overlay", action: #selector(toggleCursor), keyEquivalent: ""); cursorItem.target = self
+        let testCursor = menu.addItem(withTitle: "Test captured overlay", action: #selector(testCursorOverlay), keyEquivalent: ""); testCursor.target = self
         let restore = menu.addItem(withTitle: "Restore original resolution", action: #selector(restoreMode), keyEquivalent: ""); restore.target = self
         menu.addItem(.separator()); let quit = menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q"); quit.target = self
         item.menu = menu
     }
     @objc private func toggleCursor() { cursor.enabled.toggle(); rebuildMenu() }
+    @objc private func testCursorOverlay() { cursor.test() }
     @objc private func restoreMode() { _ = display.restore(); rebuildMenu() }
     @objc private func quit() { NSApplication.shared.terminate(nil) }
     private func present(_ message: String) { let alert = NSAlert(); alert.messageText = "OpenParsec Host"; alert.informativeText = message; alert.runModal() }
