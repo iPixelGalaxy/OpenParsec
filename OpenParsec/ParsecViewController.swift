@@ -36,6 +36,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	var scrollView: UIScrollView!
 	var contentView: UIView!
 
+	@available(iOS 14.0, *)
 	override var prefersPointerLocked: Bool {
 		return true
 	}
@@ -206,11 +207,11 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 
 		u = UIImageView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
 		contentView.addSubview(u!) // Add Cursor to ContentView
-
-		setNeedsUpdateOfPrefersPointerLocked()
-
-		let pointerInteraction = UIPointerInteraction(delegate: self)
-		view.addInteraction(pointerInteraction)
+        if #available(iOS 14.0, *) { setNeedsUpdateOfPrefersPointerLocked() }
+        if #available(iOS 13.4, *) {
+            let pointerInteraction = UIPointerInteraction(delegate: self)
+            view.addInteraction(pointerInteraction)
+        }
 
 		view.isMultipleTouchEnabled = true
 		view.isUserInteractionEnabled = true
@@ -289,10 +290,6 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 
 	override func viewDidAppear(_ animated: Bool) {
 		super.viewDidAppear(animated)
-		if let parent = parent {
-			parent.setChildForHomeIndicatorAutoHidden(self)
-			parent.setChildViewControllerForPointerLock(self)
-		}
 		if keyboardVisible {
 			becomeFirstResponder()
 		}
@@ -301,10 +298,6 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 
 	override func viewWillDisappear(_ animated: Bool) {
 		super.viewWillDisappear(animated)
-		if let parent = parent {
-			parent.setChildForHomeIndicatorAutoHidden(nil)
-			parent.setChildViewControllerForPointerLock(nil)
-		}
 		NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
 		NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
 	}
@@ -316,6 +309,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	private var altKeyHeld = false
 
 	override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard #available(iOS 13.4, *) else { sendLegacyPresses(presses, pressed: true); super.pressesBegan(presses, with: event); return }
 		for press in presses {
 			guard let key = press.key else { continue }
 
@@ -344,6 +338,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	}
 
 	override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard #available(iOS 13.4, *) else { sendLegacyPresses(presses, pressed: false); super.pressesEnded(presses, with: event); return }
 		for press in presses {
 			guard let key = press.key else { continue }
 
@@ -375,6 +370,22 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 		}
 	}
 
+    private func sendLegacyPresses(_ presses: Set<UIPress>, pressed: Bool) {
+        for press in presses {
+            let code: UInt32?
+            switch press.type {
+            case .upArrow: code = 82
+            case .downArrow: code = 81
+            case .leftArrow: code = 80
+            case .rightArrow: code = 79
+            case .select: code = 40
+            case .menu: code = 41
+            default: code = nil
+            }
+            if let code = code { CParsec.sendKeyboardMessage(keyCode: code, pressed: pressed) }
+        }
+    }
+
 	private func startKeyRepeat(keyCode: Int) {
 		stopKeyRepeat()
 		repeatKeyCode = keyCode
@@ -395,6 +406,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 		repeatKeyCode = -1
 	}
 
+	@available(iOS 13.4, *)
 	private func isModifierKey(_ keyCode: UIKeyboardHIDUsage) -> Bool {
 		switch keyCode {
 		case .keyboardLeftControl, .keyboardLeftShift, .keyboardLeftAlt, .keyboardLeftGUI,
@@ -612,6 +624,7 @@ extension ParsecViewController: UIGestureRecognizerDelegate {
 
 }
 
+@available(iOS 13.4, *)
 extension ParsecViewController: UIPointerInteractionDelegate {
 	func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
 		return UIPointerStyle.hidden()
@@ -702,7 +715,7 @@ extension ParsecViewController: UIKeyInput, UITextInputTraits {
 		// Use a simple UIView instead of UIToolbar to avoid constraint conflicts
 		let toolbarBackground = UIView(frame: CGRect(x: 0, y: 50, width: containerView.bounds.width, height: 44))
 		toolbarBackground.autoresizingMask = [.flexibleWidth, .flexibleTopMargin]
-		toolbarBackground.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.9)
+		toolbarBackground.backgroundColor = (UIColor(named: "BackgroundPrompt") ?? UIColor.darkGray).withAlphaComponent(0.9)
 
 		let scrollView = UIScrollView(frame: CGRect(x: 8, y: 0, width: toolbarBackground.bounds.width - 80, height: 44))
 		scrollView.autoresizingMask = [.flexibleWidth]

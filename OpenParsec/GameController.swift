@@ -6,7 +6,7 @@ class GamepadController {
 
     private let maximumControllerCount: Int = 1
     private(set) var controllers = Set<GCController>()
-	private(set) var mice = Set<GCMouse>()
+    private var mouseController: AnyObject?
     // private var panRecognizer: UIPanGestureRecognizer!
     weak var delegate: InputManagerDelegate?
 
@@ -27,18 +27,9 @@ class GamepadController {
                                                name: NSNotification.Name.GCControllerDidDisconnect,
                                                object: nil)
 
-		NotificationCenter.default.addObserver(self,
-											   selector: #selector(self.didMouseConnectController),
-											   name: NSNotification.Name.GCMouseDidConnect,
-											   object: nil)
-		NotificationCenter.default.addObserver(self,
-											   selector: #selector(self.didMouseDisconnectController),
-											   name: NSNotification.Name.GCMouseDidDisconnect,
-											   object: nil)
-
         GCController.startWirelessControllerDiscovery {}
 		self.registerControllerHandler()
-		self.registerMouseHandler()
+		if #available(iOS 14.0, *) { self.mouseController = MouseInputController() }
 
     }
 
@@ -64,9 +55,9 @@ class GamepadController {
 			controller.extendedGamepad?.buttonY.pressedChangedHandler =        { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_Y, pressed) }
 
 			// buttonOptions is labeled "SHARE" on PS4 controller
-			controller.extendedGamepad?.buttonOptions?.pressedChangedHandler = { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_BACK, pressed) }
+			if #available(iOS 13.0, *) { controller.extendedGamepad?.buttonOptions?.pressedChangedHandler = { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_BACK, pressed) } }
 			// buttonMenu is labeled "OPTIONS" on PS4 controller
-			controller.extendedGamepad?.buttonMenu.pressedChangedHandler =     { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_START, pressed) }
+			if #available(iOS 13.0, *) { controller.extendedGamepad?.buttonMenu.pressedChangedHandler = { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_START, pressed) } }
 
 			controller.extendedGamepad?.leftShoulder.pressedChangedHandler =   { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_LSHOULDER, pressed) }
 			controller.extendedGamepad?.rightShoulder.pressedChangedHandler =  { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_RSHOULDER, pressed) }
@@ -79,43 +70,10 @@ class GamepadController {
 			controller.extendedGamepad?.leftThumbstick.valueChangedHandler =   { [weak self] (_, xvalue, yvalue) in self?.thumbLstickChangedHandler(xvalue, yvalue) }
 			controller.extendedGamepad?.rightThumbstick.valueChangedHandler =  { [weak self] (_, xvalue, yvalue) in self?.thumbRstickChangedHandler(xvalue, yvalue) }
 
-			controller.extendedGamepad?.leftThumbstickButton?.pressedChangedHandler =  { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_LSTICK, pressed) }
-			controller.extendedGamepad?.rightThumbstickButton?.pressedChangedHandler = { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_RSTICK, pressed) }
+			if #available(iOS 12.1, *) { controller.extendedGamepad?.leftThumbstickButton?.pressedChangedHandler = { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_LSTICK, pressed) } }
+			if #available(iOS 12.1, *) { controller.extendedGamepad?.rightThumbstickButton?.pressedChangedHandler = { [weak self] (_, _, pressed) in self?.buttonChangedHandler(GAMEPAD_BUTTON_RSTICK, pressed) } }
 		}
 
-	}
-
-	func registerMouseHandler() {
-		for mouse in GCMouse.mice() {
-			mice.insert(mouse)
-			mouse.mouseInput?.leftButton.pressedChangedHandler = {(_: GCControllerButtonInput, _: Float, pressed: Bool) in
-				CParsec.sendMouseClickMessage(MOUSE_L, pressed)
-				}
-			mouse.mouseInput?.rightButton?.pressedChangedHandler = {(_: GCControllerButtonInput, _: Float, pressed: Bool) in
-				CParsec.sendMouseClickMessage(MOUSE_R, pressed)
-				}
-			mouse.mouseInput?.middleButton?.pressedChangedHandler = {(_: GCControllerButtonInput, _: Float, pressed: Bool) in
-				CParsec.sendMouseClickMessage(MOUSE_MIDDLE, pressed)
-				}
-			mouse.mouseInput?.mouseMovedHandler={(_: GCMouseInput, v: Float, v2: Float) in
-				CParsec.sendMouseDelta(Int32(v/1.25 * Float(SettingsHandler.mouseSensitivity)), Int32(-v2/1.25 * Float(SettingsHandler.mouseSensitivity)))
-				}
-			mouse.mouseInput?.scroll.yAxis.valueChangedHandler = {(_: GCControllerAxisInput, value: Float) in
-				CParsec.sendWheelMsg(x: Int32(value), y: 0)
-			}
-			mouse.mouseInput?.scroll.xAxis.valueChangedHandler = {(_: GCControllerAxisInput, value: Float) in
-				CParsec.sendWheelMsg(x: 0, y: Int32(value))
-			}
-		}
-	}
-
-	@objc func didMouseConnectController(_ notification: Notification) {
-		self.registerMouseHandler()
-	}
-
-	@objc func didMouseDisconnectController(_ notification: Notification) {
-		let mouse = notification.object as! GCMouse
-		mice.remove(mouse)
 	}
 
     @objc func didConnectController(_ notification: Notification) {
@@ -162,6 +120,30 @@ class GamepadController {
 		CParsec.sendGameControllerAxisMessage(controllerId: 1, GAMEPAD_AXIS_RY, ButtonFloatToParsecInt(-yvalue))
     }
 
+}
+
+@available(iOS 14.0, *)
+private final class MouseInputController {
+    private var mice = Set<GCMouse>()
+    init() {
+        NotificationCenter.default.addObserver(self, selector: #selector(refresh(_:)), name: .GCMouseDidConnect, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(disconnect(_:)), name: .GCMouseDidDisconnect, object: nil)
+        registerMice()
+    }
+    deinit { NotificationCenter.default.removeObserver(self) }
+    @objc private func refresh(_ notification: Notification) { registerMice() }
+    @objc private func disconnect(_ notification: Notification) { if let mouse = notification.object as? GCMouse { mice.remove(mouse) } }
+    private func registerMice() {
+        for mouse in GCMouse.mice() {
+            mice.insert(mouse)
+            mouse.mouseInput?.leftButton.pressedChangedHandler = { _, _, pressed in CParsec.sendMouseClickMessage(MOUSE_L, pressed) }
+            mouse.mouseInput?.rightButton?.pressedChangedHandler = { _, _, pressed in CParsec.sendMouseClickMessage(MOUSE_R, pressed) }
+            mouse.mouseInput?.middleButton?.pressedChangedHandler = { _, _, pressed in CParsec.sendMouseClickMessage(MOUSE_MIDDLE, pressed) }
+            mouse.mouseInput?.mouseMovedHandler = { _, x, y in CParsec.sendMouseDelta(Int32(x / 1.25 * Float(SettingsHandler.mouseSensitivity)), Int32(-y / 1.25 * Float(SettingsHandler.mouseSensitivity))) }
+            mouse.mouseInput?.scroll.yAxis.valueChangedHandler = { _, value in CParsec.sendWheelMsg(x: Int32(value), y: 0) }
+            mouse.mouseInput?.scroll.xAxis.valueChangedHandler = { _, value in CParsec.sendWheelMsg(x: 0, y: Int32(value)) }
+        }
+    }
 }
 
 protocol InputManagerDelegate: AnyObject {

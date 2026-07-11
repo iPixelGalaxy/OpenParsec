@@ -23,6 +23,7 @@ enum RightClickPosition: Int {
 	case secondFinger
 }
 
+@available(iOS 13.4, *)
 struct KeyBoardKeyEvent {
 	var input: UIKey?
 	var isPressBegin: Bool
@@ -423,6 +424,7 @@ class ParsecSDKBridge: ParsecService {
 
 	}
 
+	@available(iOS 13.4, *)
 	func sendKeyboardMessage(event: KeyBoardKeyEvent) {
 		if event.input == nil {
 			return

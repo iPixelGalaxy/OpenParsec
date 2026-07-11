@@ -81,6 +81,7 @@ def update_json_file_release(json_file, latest_release):
         "version": version,
         "date": version_date,
         "localizedDescription": description,
+        "minOSVersion": "12.0",
         "downloadURL": download_url,
         "size": size
     }
@@ -183,6 +184,7 @@ This is a nightly release [created automatically with GitHub Actions workflow]({
         "version": version,
         "date": version_date,
         "localizedDescription": description,
+        "minOSVersion": "12.0",
         "downloadURL": download_url,
         "size": size,
         "commit": commit_sha,

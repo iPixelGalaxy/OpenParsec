@@ -1,5 +1,5 @@
 import ParsecSDK
-import SwiftUI
+import UIKit
 import CoreGraphics
 import GLKit
 
@@ -149,6 +149,7 @@ protocol ParsecService {
 	func sendMouseClickMessage(_ button: ParsecMouseButton, _ pressed: Bool)
 	func sendMouseDelta(_ dx: Int32, _ dy: Int32)
 	func sendMousePosition(_ x: Int32, _ y: Int32)
+	@available(iOS 13.4, *)
 	func sendKeyboardMessage(event: KeyBoardKeyEvent)
 	func sendKeyboardMessage(keyCode: UInt32, pressed: Bool)
 	func sendVirtualKeyboardInput(text: String)
@@ -186,8 +187,10 @@ class CParsec {
 		parsecImpl = ParsecSDKBridge()
 	}
 
-	static func destroy() {
+	static func destroy() { parsecImpl = nil }
 
+	static func disconnectIfNeeded() {
+		if parsecImpl != nil { parsecImpl.disconnect() }
 	}
 
 	static func connect(_ peerID: String) -> ParsecStatus {
@@ -242,6 +245,7 @@ class CParsec {
 		parsecImpl.sendMousePosition(x, y)
 	}
 
+	@available(iOS 13.4, *)
 	static func sendKeyboardMessage(event: KeyBoardKeyEvent) {
 		parsecImpl.sendKeyboardMessage(event: event)
 	}

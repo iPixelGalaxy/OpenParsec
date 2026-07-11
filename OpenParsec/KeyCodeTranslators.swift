@@ -2,6 +2,7 @@ import UIKit
 import ParsecSDK
 
 class KeyCodeTranslators {
+	@available(iOS 13.4, *)
 	static func uiKeyCodeToInt(key: UIKeyboardHIDUsage) -> Int {
 		switch key {
 		case .keyboardErrorRollOver:

@@ -1,10 +1,10 @@
 # <p align="center">![icon_transparent.png](OpenParsec/Assets.xcassets/IconTransparent.imageset/icon_transparent.png) ![OpenParsec](OpenParsec/Assets.xcassets/LogoShadow.imageset/logo_shadow.png)</p>
 
-OpenParsec is a simple, open-source Parsec client for iOS/iPadOS written in Swift using the SwiftUI framework and the Parsec SDK.
+OpenParsec is a simple, open-source Parsec client for iOS/iPadOS written in Swift using UIKit and the Parsec SDK. The app supports arm64 devices running iOS 12.0 or later.
 
 This project is still a major WIP, so apologies for the currently lackluster documentation. I'm also very new to both Swift and SwiftUI so I'm sure there are many places for improvement.
 
-Before building, make sure you have the Parsec SDK framework symlinked or copied to the `Frameworks` folder. Builds were tested on Xcode Version 12.5.
+Before building, initialize the pinned Parsec SDK framework with `git submodule update --init --recursive`. Build and runtime validation for iOS 12 requires an Xcode release that can deploy to iOS 12 and an arm64 iOS 12 device.
 
 ## Downloads
 <a href="https://stikstore.app/altdirect/?url=https://github.com/hugeBlack/OpenParsec/releases/download/nightly/altstore.json" target="_blank">
