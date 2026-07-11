@@ -94,34 +94,80 @@ final class ParsecAPIClient {
     private static func errorMessage(_ data: Data) -> String? { return (try? JSONDecoder().decode(ErrorInfo.self, from: data))?.error }
 }
 
+enum SessionPersistence: Equatable {
+    case keychain, userDefaultsFallback
+}
+
+struct StoredSession {
+    let info: ClientInfo
+    let persistence: SessionPersistence
+}
+
 final class SessionStore {
     private let key = GLBDataModel.shared.SessionKeyChainKey
+    private let fallbackKey = "OPStoredAuthDataFallback"
+    private let warningKey = "OPSessionFallbackWarningShown"
+    private let defaults = UserDefaults.standard
 
-    func load() -> ClientInfo? {
+    func load() -> StoredSession? {
+        if let info = loadFromKeychain() { return StoredSession(info: info, persistence: .keychain) }
+        guard let data = defaults.data(forKey: fallbackKey), let info = try? JSONDecoder().decode(ClientInfo.self, from: data) else { return nil }
+        if saveToKeychain(data) == errSecSuccess {
+            defaults.removeObject(forKey: fallbackKey)
+            return StoredSession(info: info, persistence: .keychain)
+        }
+        return StoredSession(info: info, persistence: .userDefaultsFallback)
+    }
+
+    private func loadFromKeychain() -> ClientInfo? {
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else {
+            if status != errSecItemNotFound { log(status, operation: "load") }
+            return nil
+        }
         return try? JSONDecoder().decode(ClientInfo.self, from: data)
     }
 
     @discardableResult
-    func save(_ info: ClientInfo) -> Bool {
-        guard let data = try? JSONEncoder().encode(info) else { return false }
+    func save(_ info: ClientInfo) -> SessionPersistence? {
+        guard let data = try? JSONEncoder().encode(info) else { return nil }
+        let status = saveToKeychain(data)
+        if status == errSecSuccess {
+            defaults.removeObject(forKey: fallbackKey)
+            return .keychain
+        }
+        log(status, operation: "save")
+        defaults.set(data, forKey: fallbackKey)
+        return defaults.data(forKey: fallbackKey) == data ? .userDefaultsFallback : nil
+    }
+
+    private func saveToKeychain(_ data: Data) -> OSStatus {
         let query = baseQuery()
         let attributes: [String: Any] = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecItemNotFound {
             var insert = query
             insert[kSecValueData as String] = data
-            return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+            return SecItemAdd(insert as CFDictionary, nil)
         }
-        return updateStatus == errSecSuccess
+        return updateStatus
     }
 
     func clear() {
         SecItemDelete(baseQuery() as CFDictionary)
+        defaults.removeObject(forKey: fallbackKey)
+    }
+
+    var shouldShowFallbackWarning: Bool { return !defaults.bool(forKey: warningKey) }
+    func acknowledgeFallbackWarning() { defaults.set(true, forKey: warningKey) }
+
+    private func log(_ status: OSStatus, operation: String) {
+        let message = SecCopyErrorMessageString(status, nil) as String? ?? "Unknown Security error"
+        print("Keychain \(operation) failed (\(status)): \(message)")
     }
 
     private func baseQuery() -> [String: Any] {
@@ -134,16 +180,30 @@ final class AppCoordinator {
     let api = ParsecAPIClient()
     let sessionStore = SessionStore()
     private(set) var dashboard: DashboardViewController?
+    private var fallbackWarningPending = false
 
     init(window: UIWindow) { self.window = window }
     func start() {
-        if let info = sessionStore.load() { NetworkHandler.clinfo = info; showDashboard() } else { showLogin() }
+        if let session = sessionStore.load() {
+            NetworkHandler.clinfo = session.info
+            fallbackWarningPending = session.persistence == .userDefaultsFallback && sessionStore.shouldShowFallbackWarning
+            showDashboard()
+        } else { showLogin() }
         window.makeKeyAndVisible()
     }
     func showLogin() { window.rootViewController = LoginViewController(coordinator: self); dashboard = nil }
     func showDashboard() { let vc = DashboardViewController(coordinator: self); dashboard = vc; window.rootViewController = vc }
     func showStream() { window.rootViewController = StreamViewController(coordinator: self) }
     func logout() { CParsec.disconnectIfNeeded(); sessionStore.clear(); NetworkHandler.clinfo = nil; showLogin() }
+    func notePersistence(_ persistence: SessionPersistence) { fallbackWarningPending = persistence == .userDefaultsFallback && sessionStore.shouldShowFallbackWarning }
+    func showFallbackWarningIfNeeded(on controller: UIViewController) {
+        guard fallbackWarningPending else { return }
+        fallbackWarningPending = false
+        sessionStore.acknowledgeFallbackWarning()
+        let alert = UIAlertController(title: "Session Storage Warning", message: "This installation cannot access the iOS Keychain. Your login will be remembered using less-secure local app storage instead.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        controller.present(alert, animated: true)
+    }
 }
 
 class BaseViewController: UIViewController {
@@ -180,8 +240,9 @@ final class LoginViewController: BaseViewController {
             guard let self = self else { return }; self.setLoading(false)
             switch result {
             case .success(.authenticated(let info, _)):
-                guard self.coordinator.sessionStore.save(info) else { self.alert("Login Failed", message: "Unable to securely save the session in Keychain."); return }
+                guard let persistence = self.coordinator.sessionStore.save(info) else { self.alert("Login Failed", message: "Unable to save the session on this device."); return }
                 NetworkHandler.clinfo = info
+                self.coordinator.notePersistence(persistence)
                 self.coordinator.showDashboard()
             case .success(.twoFactorRequired): self.askForTFA()
             case .failure(let error): self.alert("Login Failed", message: error.localizedDescription)
@@ -226,6 +287,7 @@ final class DashboardViewController: BaseViewController, UITableViewDataSource, 
         refreshAll()
         ParsecBackgroundManager.shared.onShouldReconnect = { [weak self] peer in if let host = self?.hosts.first(where: { $0.id == peer }) { self?.connect(host) } else { self?.refreshAll() } }
     }
+    override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); coordinator.showFallbackWarningIfNeeded(on: self) }
     @objc private func changePage() { page = DashboardPage(rawValue: selector.selectedSegmentIndex) ?? .hosts; table.reloadData() }
     @objc private func refreshAll() {
         guard let token = NetworkHandler.clinfo?.session_id else { coordinator.showLogin(); return }

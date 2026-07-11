@@ -77,6 +77,8 @@ jobs:
       artifact: ${{ env.scheme }}.ipa
 
     steps:
+      - name: Checkout signing metadata
+        uses: actions/checkout@v4
       - name: Download a Build Artifact
         uses: actions/download-artifact@v4
         with:
@@ -96,7 +98,11 @@ jobs:
       - name: Fakesign
         run: |
           find "$archive_path.xcarchive/Products/Applications/$scheme.app" -type d -path '*/Frameworks/*.framework' -exec ldid -S \{\} \;
-          ldid -S "$archive_path.xcarchive/Products/Applications/$scheme.app"
+          app="$archive_path.xcarchive/Products/Applications/$scheme.app"
+          ldid -S.github/AppSync.entitlements "$app/$scheme"
+          ldid -e "$app/$scheme" > signed-entitlements.plist
+          grep -q '3C3YHUUV75.com.aigch.OpenParsec' signed-entitlements.plist
+          grep -q 'keychain-access-groups' signed-entitlements.plist
       - name: Create IPA
         run: |
           mv "$archive_path.xcarchive/Products/Applications" Payload
