@@ -2,6 +2,10 @@
 
 OpenParsec is a simple, open-source Parsec client for iOS/iPadOS written in Swift using UIKit and the Parsec SDK. The app supports arm64 devices running iOS 12.0 or later.
 
+## Cursor visibility
+
+OpenParsec tracks cursor movement initiated by the iOS client and the position reported by the Parsec SDK when leaving relative mouse mode. The pinned SDK does not continuously report cursor coordinates for mouse movement performed locally on the host. To see host-local movement, configure the host to capture its cursor in the video stream. Independent host-local cursor mirroring would require a future host companion application.
+
 This project is still a major WIP, so apologies for the currently lackluster documentation. I'm also very new to both Swift and SwiftUI so I'm sure there are many places for improvement.
 
 Before building, initialize the pinned Parsec SDK framework with `git submodule update --init --recursive`. Build and runtime validation for iOS 12 requires an Xcode release that can deploy to iOS 12 and an arm64 iOS 12 device.

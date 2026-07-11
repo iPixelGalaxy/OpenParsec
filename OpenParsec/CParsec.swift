@@ -5,7 +5,7 @@ import GLKit
 
 enum ParsecResolution: String, CaseIterable, Hashable {
 	case host = "Host Resolution"
-	case client = "Client Resolution" // updated dynamically during connection
+	case client = "Device Native" // updated from UIKit bounds and nativeScale
 	case r3840x2160_16_9 = "3840x2160 (16:9)"
 	case r3840x1600_21_9 = "3840x1600 (21:9)"
 	case r3440x1440_21_9 = "3440x1440 (21:9)"
@@ -286,4 +286,9 @@ class CParsec {
 	static func getImpl() -> ParsecService {
 		return parsecImpl
 	}
+}
+
+enum LocalDisplayMode: Int, CaseIterable {
+	case fit, fill, pixelPerfect
+	var title: String { switch self { case .fit: return "Fit"; case .fill: return "Fill"; case .pixelPerfect: return "1:1" } }
 }

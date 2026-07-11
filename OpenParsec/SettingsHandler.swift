@@ -7,6 +7,7 @@ struct SettingsHandler {
         return T(rawValue: defaults.integer(forKey: key)) ?? fallback
     }
     static var resolution: ParsecResolution { get { defaults.string(forKey: "resolution").flatMap(ParsecResolution.init(rawValue:)) ?? .client } set { defaults.set(newValue.rawValue, forKey: "resolution") } }
+    static var localDisplayMode: LocalDisplayMode { get { value("LocalDisplayMode", default: .fit) } set { defaults.set(newValue.rawValue, forKey: "LocalDisplayMode") } }
     static var bitrate: Int { get { defaults.integer(forKey: "bitrate") } set { defaults.set(newValue, forKey: "bitrate") } }
     static var decoder: DecoderPref { get { value("decoder", default: .h264) } set { defaults.set(newValue.rawValue, forKey: "decoder") } }
     static var cursorMode: CursorMode { get { value("cursorMode", default: .touchpad) } set { defaults.set(newValue.rawValue, forKey: "cursorMode") } }

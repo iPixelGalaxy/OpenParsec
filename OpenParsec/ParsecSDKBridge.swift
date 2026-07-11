@@ -138,6 +138,10 @@ class ParsecSDKBridge: ParsecService {
 		let ans = ParsecClientGetStatus(_parsec, &pcs)
 		self.hostHeight = Float(pcs.decoder.0.height)
 		self.hostWidth = Float(pcs.decoder.0.width)
+		DispatchQueue.main.async {
+			DataManager.model.decoderWidth = Int(pcs.decoder.0.width)
+			DataManager.model.decoderHeight = Int(pcs.decoder.0.height)
+		}
 
 		return ans
 	}
@@ -199,8 +203,12 @@ class ParsecSDKBridge: ParsecService {
 				let videoConfig = config.video[0]
 
 				DispatchQueue.main.async {
-					DataManager.model.resolutionX = videoConfig.resolutionX
-					DataManager.model.resolutionY = videoConfig.resolutionY
+					DataManager.model.confirmedResolutionX = videoConfig.resolutionX
+					DataManager.model.confirmedResolutionY = videoConfig.resolutionY
+					let requested = (DataManager.model.resolutionX, DataManager.model.resolutionY)
+					let confirmed = (videoConfig.resolutionX, videoConfig.resolutionY)
+					DataManager.model.resolutionFeedback = requested != (0, 0) && requested != confirmed
+						? "Host applied \(confirmed.0) x \(confirmed.1) instead of \(requested.0) x \(requested.1)" : nil
 					DataManager.model.bitrate = videoConfig.encoderMaxBitrate
 					DataManager.model.constantFps = videoConfig.fullFPS
 					if !self.didSetResolution {
@@ -233,9 +241,15 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func handleCursorEvent(event: ParsecClientCursorEvent) {
-		let prevHidden = mouseInfo.cursorHidden
+		let wasRelative = mouseInfo.mousePositionRelative
 		mouseInfo.cursorHidden = event.cursor.hidden
 		mouseInfo.mousePositionRelative = event.cursor.relative
+		// positionX/Y are valid whenever the SDK reports leaving relative mode,
+		// independently of whether the cursor image changed in the same event.
+		if wasRelative && !event.cursor.relative {
+			mouseInfo.mouseX = Int32(event.cursor.positionX)
+			mouseInfo.mouseY = Int32(event.cursor.positionY)
+		}
 
 		if event.cursor.imageUpdate || !getFirstCursor {
 			getFirstCursor = true
@@ -249,11 +263,6 @@ class ParsecSDKBridge: ParsecService {
 			let height = event.cursor.height
 			mouseInfo.cursorWidth = Int(width)
 			mouseInfo.cursorHeight = Int(height)
-
-			if prevHidden && !event.cursor.hidden {
-				mouseInfo.mouseX = Int32(event.cursor.positionX)
-				mouseInfo.mouseY = Int32(event.cursor.positionY)
-			}
 
 			mouseInfo.cursorHotX = Int(event.cursor.hotX)
 			mouseInfo.cursorHotY = Int(event.cursor.hotY)
@@ -342,6 +351,8 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func sendMouseRelativeMove(_ dx: Int32, _ dy: Int32) {
+		mouseInfo.mouseX = ParsecSDKBridge.clamp(mouseInfo.mouseX + dx, minValue: 0, maxValue: Int32(clientWidth))
+		mouseInfo.mouseY = ParsecSDKBridge.clamp(mouseInfo.mouseY + dy, minValue: 0, maxValue: Int32(clientHeight))
 		var motionMessage = ParsecMessage()
 		motionMessage.type = MESSAGE_MOUSE_MOTION
 		motionMessage.mouseMotion.x = dx

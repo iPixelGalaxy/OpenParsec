@@ -35,6 +35,10 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	var onKeyboardVisibilityChanged: ((Bool) -> Void)?
 	var scrollView: UIScrollView!
 	var contentView: UIView!
+	private var displayMode = SettingsHandler.localDisplayMode
+	private var streamSize = CGSize.zero
+	private var lastSDKFrameSize = CGSize.zero
+	private var lastSDKFrameScale: CGFloat = 0
 
 	@available(iOS 14.0, *)
 	override var prefersPointerLocked: Bool {
@@ -267,19 +271,60 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 
 	}
 
+	override func viewDidLayoutSubviews() {
+		super.viewDidLayoutSubviews()
+		layoutStream()
+	}
+
+	func setDisplayMode(_ mode: LocalDisplayMode) {
+		displayMode = mode
+		SettingsHandler.localDisplayMode = mode
+		scrollView.setZoomScale(1, animated: false)
+		layoutStream()
+	}
+
+	func updateStreamSize(width: Int, height: Int) {
+		guard width > 0, height > 0 else { return }
+		let next = CGSize(width: CGFloat(width), height: CGFloat(height))
+		guard next != streamSize else { return }
+		streamSize = next
+		layoutStream()
+	}
+
+	private func layoutStream() {
+		guard isViewLoaded, scrollView != nil else { return }
+		let viewport = scrollView.bounds.size
+		guard viewport.width > 0, viewport.height > 0 else { return }
+		let source = streamSize == .zero ? CGSize(width: CGFloat(max(CParsec.hostWidth, 1)), height: CGFloat(max(CParsec.hostHeight, 1))) : streamSize
+		let fit = min(viewport.width / source.width, viewport.height / source.height)
+		let fill = max(viewport.width / source.width, viewport.height / source.height)
+		let scale: CGFloat
+		switch displayMode {
+		case .fit: scale = fit
+		case .fill: scale = fill
+		case .pixelPerfect: scale = 1 / max(view.window?.screen.nativeScale ?? UIScreen.main.nativeScale, 1)
+		}
+		let rendered = CGSize(width: source.width * scale, height: source.height * scale)
+		contentView.frame = CGRect(origin: .zero, size: rendered)
+		scrollView.contentSize = rendered
+		let insetX = max(0, (viewport.width - rendered.width) / 2)
+		let insetY = max(0, (viewport.height - rendered.height) / 2)
+		scrollView.contentInset = UIEdgeInsets(top: insetY, left: insetX, bottom: insetY + (keyboardVisible ? keyboardHeight : 0), right: insetX)
+		glkView.updateSize(width: rendered.width, height: rendered.height)
+		let nativeScale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
+		if rendered != lastSDKFrameSize || nativeScale != lastSDKFrameScale {
+			lastSDKFrameSize = rendered
+			lastSDKFrameScale = nativeScale
+			CParsec.setFrame(rendered.width, rendered.height, nativeScale)
+		}
+	}
+
 	override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
 		super.viewWillTransition(to: size, with: coordinator)
 
-		let h = size.height
-		let w = size.width
-
 		// Reset zoom on rotation
 		scrollView.zoomScale = 1.0
-
-		self.glkView.updateSize(width: w, height: h)
-		contentView.frame.size = CGSize(width: w, height: h)
-		scrollView.contentSize = CGSize(width: w, height: h)
-		CParsec.setFrame(w, h, UIScreen.main.scale)
+		coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.layoutStream() }
 
         // Reset accessory view to ensure correct width in new orientation
         keyboardAccessoriesView = nil

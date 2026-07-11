@@ -14,6 +14,11 @@ final class StreamState {
     var onChange: (() -> Void)?
     var resolutionX = 0 { didSet { notify() } }
     var resolutionY = 0 { didSet { notify() } }
+    var confirmedResolutionX = 0 { didSet { notify() } }
+    var confirmedResolutionY = 0 { didSet { notify() } }
+    var decoderWidth = 0 { didSet { notify() } }
+    var decoderHeight = 0 { didSet { notify() } }
+    var resolutionFeedback: String? { didSet { notify() } }
     var bitrate = 0 { didSet { notify() } }
     var constantFps = false { didSet { notify() } }
     var output = "none" { didSet { notify() } }
