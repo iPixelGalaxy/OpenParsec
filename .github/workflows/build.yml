@@ -113,13 +113,34 @@ jobs:
           name: ${{ env.scheme }}.ipa
           path: ${{ env.scheme }}.ipa
 
+  companion:
+    name: Build macOS host companion
+    runs-on: macos-latest
+    outputs:
+      artifact: OpenParsecHost.zip
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build companion
+        run: swift build --package-path HostCompanion -c release
+      - name: Package companion app
+        run: |
+          mkdir -p OpenParsecHost.app/Contents/MacOS
+          cp HostCompanion/.build/release/OpenParsecHost OpenParsecHost.app/Contents/MacOS/OpenParsecHost
+          cp HostCompanion/Info.plist OpenParsecHost.app/Contents/Info.plist
+          codesign --force --deep --sign - OpenParsecHost.app
+          ditto -c -k --keepParent OpenParsecHost.app OpenParsecHost.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenParsecHost.zip
+          path: OpenParsecHost.zip
+
   release__nightly:
     name: Nightly Release
     permissions:
       contents: write
     if: inputs.release__nightly || github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    needs: [package]
+    needs: [package, companion]
     concurrency:
       group: release__nightly
       cancel-in-progress: true
@@ -131,6 +152,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.package.outputs.artifact }}
+      - name: Download host companion
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.companion.outputs.artifact }}
       - name: Update AltStore source
         id: update_source
         env:
@@ -149,4 +174,5 @@ jobs:
             This is a nightly release [created automatically with GitHub Actions workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}).
           files: |
             ${{ needs.package.outputs.artifact }}
+            OpenParsecHost.zip
             altstore.json

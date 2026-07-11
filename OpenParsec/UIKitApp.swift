@@ -179,6 +179,7 @@ final class AppCoordinator {
     let window: UIWindow
     let api = ParsecAPIClient()
     let sessionStore = SessionStore()
+    let companion = CompanionClient()
     private(set) var dashboard: DashboardViewController?
     private var fallbackWarningPending = false
 
@@ -279,7 +280,8 @@ final class DashboardViewController: BaseViewController, UITableViewDataSource, 
         let logout = UIButton(type: .system); logout.setTitle("Logout", for: .normal); logout.addTarget(self, action: #selector(confirmLogout), for: .touchUpInside)
         let settings = UIButton(type: .system); settings.setTitle("Settings", for: .normal); settings.addTarget(self, action: #selector(showSettings), for: .touchUpInside)
         let refresh = UIButton(type: .system); refresh.setTitle("Refresh", for: .normal); refresh.addTarget(self, action: #selector(refreshAll), for: .touchUpInside)
-        let bar = UIStackView(arrangedSubviews: [logout, refresh, settings]); bar.distribution = .equalSpacing
+        let pair = UIButton(type: .system); pair.setTitle("Pair Mac", for: .normal); pair.addTarget(self, action: #selector(pairCompanion), for: .touchUpInside)
+        let bar = UIStackView(arrangedSubviews: [logout, refresh, pair, settings]); bar.distribution = .equalSpacing
         selector.selectedSegmentIndex = 0; selector.addTarget(self, action: #selector(changePage), for: .valueChanged)
         table.backgroundColor = .clear; table.separatorColor = UIColor(named: "Shading"); table.dataSource = self; table.delegate = self; table.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
         let stack = UIStackView(arrangedSubviews: [bar, table, selector]); stack.axis = NSLayoutConstraint.Axis.vertical; stack.spacing = 8; stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack); view.addSubview(spinner); spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -312,6 +314,18 @@ final class DashboardViewController: BaseViewController, UITableViewDataSource, 
     }
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) { tableView.deselectRow(at: indexPath, animated: true); if page == .hosts { connect(hosts[indexPath.row]) } }
     private func connect(_ host: IdentifiableHostInfo) {
+        let screen = UIScreen.main
+        ParsecResolution.updateClientResolution(width: Int(screen.nativeBounds.width), height: Int(screen.nativeBounds.height))
+        if SettingsHandler.legacyIPadAutoTune {
+            SettingsHandler.decoder = .h264
+            SettingsHandler.preferredFramesPerSecond = 60
+            SettingsHandler.decoderCompatibility = false
+            if SettingsHandler.bitrate == 0 || SettingsHandler.bitrate > 15 { SettingsHandler.bitrate = 10 }
+            if SettingsHandler.resolution == .client { SettingsHandler.resolution = .r1920x1200_16_10 }
+        }
+        coordinator.companion.prepareLegacyMode { [weak self] in self?.startParsecConnection(host) }
+    }
+    private func startParsecConnection(_ host: IdentifiableHostInfo) {
         CParsec.initialize(); var status = CParsec.connect(host.id); pollTimer?.invalidate()
         let prompt = UIAlertController(title: "Connecting to \(host.hostname)...", message: nil, preferredStyle: .alert)
         prompt.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.pollTimer?.invalidate(); CParsec.disconnect(); self?.connectionPrompt = nil })
@@ -320,6 +334,18 @@ final class DashboardViewController: BaseViewController, UITableViewDataSource, 
             status = CParsec.getStatus(); if status == PARSEC_CONNECTING { return }; timer.invalidate()
             self?.connectionPrompt?.dismiss(animated: true) { self?.connectionPrompt = nil; if status == PARSEC_OK { self?.coordinator.showStream() } else { CParsec.disconnect(); self?.alert("Connection Failed", message: "Parsec status \(status.rawValue)") } }
         }
+    }
+    @objc private func pairCompanion() {
+        let name = coordinator.companion.discoveredName ?? "No Mac discovered yet"
+        let prompt = UIAlertController(title: "Pair Mac Companion", message: "Discovered: \(name)\nEnter the six-digit code shown in the OpenParsec Host menu.", preferredStyle: .alert)
+        prompt.addTextField { $0.keyboardType = .numberPad; $0.placeholder = "000000" }
+        prompt.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        prompt.addAction(UIAlertAction(title: "Pair", style: .default) { [weak self, weak prompt] _ in
+            self?.coordinator.companion.pair(code: prompt?.textFields?.first?.text ?? "") { result in
+                switch result { case .success(let value): self?.alert("Companion Paired", message: value); case .failure(let error): self?.alert("Pairing Failed", message: error.localizedDescription) }
+            }
+        })
+        present(prompt, animated: true)
     }
     @objc private func confirmLogout() { let prompt = UIAlertController(title: "Log out?", message: nil, preferredStyle: .alert); prompt.addAction(UIAlertAction(title: "Cancel", style: .cancel)); prompt.addAction(UIAlertAction(title: "Logout", style: .destructive) { [weak self] _ in self?.coordinator.logout() }); present(prompt, animated: true) }
     @objc private func showSettings() { present(UINavigationController(rootViewController: SettingsViewController()), animated: true) }
@@ -337,11 +363,13 @@ final class SettingsViewController: UITableViewController {
         sections = [
             ("Interactivity", [
                 choice("Mouse Movement", current: { SettingsHandler.cursorMode == .touchpad ? "Touchpad" : "Direct" }, values: [("Touchpad", { SettingsHandler.cursorMode = .touchpad }), ("Direct", { SettingsHandler.cursorMode = .direct })]),
+                .toggle("Mac Companion Cursor", { SettingsHandler.companionCursorEnabled }, { SettingsHandler.companionCursorEnabled = $0 }),
                 choice("Right Click Position", current: { ["First Finger", "Middle", "Second Finger"][SettingsHandler.rightClickPosition.rawValue] }, values: [("First Finger", { SettingsHandler.rightClickPosition = .firstFinger }), ("Middle", { SettingsHandler.rightClickPosition = .middle }), ("Second Finger", { SettingsHandler.rightClickPosition = .secondFinger })]),
                 .slider("Cursor Scale", { SettingsHandler.cursorScale }, { SettingsHandler.cursorScale = $0 }),
                 .slider("Mouse Sensitivity", { SettingsHandler.mouseSensitivity }, { SettingsHandler.mouseSensitivity = $0 })
             ]),
             ("Graphics", [
+                .toggle("Legacy iPad Auto 60", { SettingsHandler.legacyIPadAutoTune }, { SettingsHandler.legacyIPadAutoTune = $0 }),
                 choice("Default Resolution", current: { SettingsHandler.resolution.desc }, values: ParsecResolution.resolutions.map { value in (value.desc, { SettingsHandler.resolution = value }) }),
                 choice("Display Mode", current: { SettingsHandler.localDisplayMode.title }, values: LocalDisplayMode.allCases.map { value in (value.title, { SettingsHandler.localDisplayMode = value }) }),
                 choice("Decoder", current: { SettingsHandler.decoder == .h264 ? "H.264" : "Prefer H.265" }, values: [("H.264", { SettingsHandler.decoder = .h264 }), ("Prefer H.265", { SettingsHandler.decoder = .h265 })]),
@@ -384,10 +412,57 @@ final class SettingsViewController: UITableViewController {
     }
 }
 
+private final class AdaptiveQualityController {
+    private var warmup = 5, samples: [(decode: Float, encode: Float, network: Float, queued: UInt32)] = []
+    private var lastPackets: UInt32 = 0, lastRetransmits: UInt32 = 0
+    private var testedNative = false
+    private let tiers: [ParsecResolution] = [.r1920x1200_16_10, .r1920x1080_16_9, .r1680x1050_16_10, .r1280x800_16_10, .r1280x720_16_9, .r1024x768_4_3]
+    var stateText = "Auto 60: warming up"
+
+    func reset() { warmup = 5; samples.removeAll(); lastPackets = 0; lastRetransmits = 0; testedNative = false; stateText = "Auto 60: warming up" }
+
+    func sample(status: ParsecClientStatus, adjust: (ParsecResolution?, Int?) -> Void) {
+        guard SettingsHandler.legacyIPadAutoTune else { stateText = "Auto 60: off"; return }
+        if warmup > 0 { warmup -= 1; return }
+        let metric = status.`self`.metrics.0
+        samples.append((metric.decodeLatency, metric.encodeLatency, metric.networkLatency, metric.queuedFrames))
+        guard samples.count >= 10 else { stateText = "Auto 60: measuring \(samples.count)/10"; return }
+        let decode = samples.map { $0.decode }.sorted(), encode = samples.map { $0.encode }.sorted(), network = samples.map { $0.network }.sorted()
+        let p95Index = min(9, Int(Double(samples.count - 1) * 0.95))
+        let retransmits = metric.fastRTs &+ metric.slowRTs
+        let packetDelta = metric.packetsSent &- lastPackets
+        let retransmitDelta = retransmits &- lastRetransmits
+        let lossRatio = packetDelta == 0 ? 0 : Float(retransmitDelta) / Float(packetDelta)
+        lastPackets = metric.packetsSent; lastRetransmits = retransmits
+        let decodeBad = status.decoder.0.index == 0 || decode[p95Index] >= 14 || (samples.map { $0.queued }.max() ?? 0) > 2
+        let encodeBad = encode[p95Index] >= 14
+        let jitter = network[p95Index] - network[network.count / 2]
+        let networkBad = lossRatio > 0.005 || network[network.count / 2] >= 30 || jitter > 15 || status.networkFailure
+        samples.removeAll(keepingCapacity: true); warmup = 5
+        if networkBad && SettingsHandler.bitrate > 5 {
+            let next = SettingsHandler.bitrate > 10 ? 10 : (SettingsHandler.bitrate > 7 ? 7 : 5)
+            stateText = "Auto 60: network limited, trying \(next) Mbps"; adjust(nil, next); return
+        }
+        if decodeBad || encodeBad {
+            let pixels = Int(status.decoder.0.width * status.decoder.0.height)
+            if let next = tiers.first(where: { $0.width * $0.height < pixels }) {
+                stateText = "Auto 60: overloaded, trying \(next.desc)"; adjust(next, nil); return
+            }
+            stateText = "Auto 60: minimum tier still overloaded"; return
+        }
+        if !testedNative && status.decoder.0.width <= 1920 && decode[p95Index] < 8 && encode[p95Index] < 8 && !networkBad {
+            testedNative = true
+            stateText = "Auto 60: testing iPad native resolution"; adjust(.client, nil); return
+        }
+        stateText = "Auto 60: stable"
+    }
+}
+
 final class StreamViewController: BaseViewController {
     private unowned let coordinator: AppCoordinator
     private let renderer = ParsecViewController(), menu = UIStackView(), metrics = UILabel(), menuButton = UIButton(type: .system), keyboardButton = UIButton(type: .system)
     private var timer: Timer?, muted = false, zoomed = false
+    private let adaptiveQuality = AdaptiveQualityController()
     init(coordinator: AppCoordinator) { self.coordinator = coordinator; super.init(nibName: nil, bundle: nil); if SettingsHandler.saveSessionSettings { muted = SettingsHandler.savedMuted; zoomed = SettingsHandler.savedZoomEnabled; DataManager.model.constantFps = SettingsHandler.savedConstantFps } }
     required init?(coder: NSCoder) { fatalError() }
     override var prefersStatusBarHidden: Bool { return SettingsHandler.hideStatusBar }
@@ -404,7 +479,7 @@ final class StreamViewController: BaseViewController {
         metrics.textColor = .white; metrics.font = .systemFont(ofSize: 11); metrics.numberOfLines = 0
         menu.axis = .vertical; menu.spacing = 4; menu.backgroundColor = (UIColor(named: "BackgroundPrompt") ?? .darkGray).withAlphaComponent(0.9); menu.layer.cornerRadius = 6; menu.translatesAutoresizingMaskIntoConstraints = false; menu.isHidden = true; view.addSubview(menu)
         menu.addArrangedSubview(metrics)
-        [("Mute", #selector(toggleMute)), ("Stream Resolution", #selector(selectResolution)), ("Display Mode", #selector(selectDisplayMode)), ("Bitrate", #selector(selectBitrate)), ("Host Display", #selector(selectDisplay)), ("Constant FPS", #selector(toggleConstantFPS)), ("Zoom", #selector(toggleZoom)), ("Disconnect", #selector(disconnect))].forEach { menu.addArrangedSubview(menuItem($0.0, $0.1)) }
+        [("Mute", #selector(toggleMute)), ("Stream Resolution", #selector(selectResolution)), ("Display Mode", #selector(selectDisplayMode)), ("Bitrate", #selector(selectBitrate)), ("Retest Auto 60", #selector(retestAutoQuality)), ("Host Display", #selector(selectDisplay)), ("Constant FPS", #selector(toggleConstantFPS)), ("Zoom", #selector(toggleZoom)), ("Disconnect", #selector(disconnect))].forEach { menu.addArrangedSubview(menuItem($0.0, $0.1)) }
         NSLayoutConstraint.activate([menuButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12), menuButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12), menuButton.widthAnchor.constraint(equalToConstant: 48), menuButton.heightAnchor.constraint(equalToConstant: 48), keyboardButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12), keyboardButton.topAnchor.constraint(equalTo: menuButton.bottomAnchor, constant: 8), menu.leadingAnchor.constraint(equalTo: menuButton.trailingAnchor, constant: 8), menu.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12), menu.widthAnchor.constraint(equalToConstant: 220)])
         updateDeviceNativeResolution(); CParsec.applyConfig(); CParsec.setMuted(muted); renderer.setDisplayMode(SettingsHandler.localDisplayMode); renderer.setZoomEnabled(zoomed); hideOverlayIfNeeded(); getHostData()
         renderer.onKeyboardVisibilityChanged = { [weak self] visible in self?.keyboardButton.isSelected = visible }
@@ -436,16 +511,36 @@ final class StreamViewController: BaseViewController {
     @objc private func toggleZoom() { zoomed.toggle(); renderer.setZoomEnabled(zoomed); if SettingsHandler.saveSessionSettings { SettingsHandler.savedZoomEnabled = zoomed } }
     @objc private func toggleKeyboard() { renderer.setKeyboardVisible(!renderer.keyboardVisible) }
     @objc private func toggleConstantFPS() { DataManager.model.constantFps.toggle(); CParsec.updateHostVideoConfig(); if SettingsHandler.saveSessionSettings { SettingsHandler.savedConstantFps = DataManager.model.constantFps } }
-    @objc private func selectResolution(_ sender: UIButton) { showChoices(title: "Stream Resolution", source: sender, choices: ParsecResolution.resolutions.map { value in (value.desc, { SettingsHandler.resolution = value; self.updateDeviceNativeResolution(); DataManager.model.resolutionX = value.width; DataManager.model.resolutionY = value.height; DataManager.model.resolutionFeedback = "Requesting \(value.desc)…"; CParsec.updateHostVideoConfig(); self.getHostData() }) }) }
+    @objc private func selectResolution(_ sender: UIButton) { showChoices(title: "Stream Resolution", source: sender, choices: ParsecResolution.resolutions.map { value in (value.desc, { SettingsHandler.resolution = value; self.updateDeviceNativeResolution(); DataManager.model.resolutionX = value.width; DataManager.model.resolutionY = value.height; DataManager.model.resolutionFeedback = "Requesting \(value.desc)…"; if value != .host { self.coordinator.companion.setMode(width: value.width, height: value.height) { applied in if applied { DataManager.model.resolutionFeedback = "Companion applied \(value.desc)" } } }; CParsec.updateHostVideoConfig(); self.getHostData() }) }) }
     @objc private func selectDisplayMode(_ sender: UIButton) { showChoices(title: "Display Mode", source: sender, choices: LocalDisplayMode.allCases.map { value in (value.title, { self.renderer.setDisplayMode(value) }) }) }
     @objc private func selectBitrate(_ sender: UIButton) { showChoices(title: "Bitrate", source: sender, choices: ParsecResolution.bitrates.map { value in ("\(value) Mbps", { SettingsHandler.bitrate = value; DataManager.model.bitrate = value; CParsec.updateHostVideoConfig() }) }) }
+    @objc private func retestAutoQuality() { adaptiveQuality.reset(); SettingsHandler.legacyIPadAutoTune = true; SettingsHandler.bitrate = 10; DataManager.model.bitrate = 10; coordinator.companion.setMode(width: 1920, height: 1200); CParsec.updateHostVideoConfig() }
     @objc private func selectDisplay(_ sender: UIButton) { var choices: [(String, () -> Void)] = [("Auto", { DataManager.model.output = "none"; CParsec.updateHostVideoConfig() })]; choices += DataManager.model.displayConfigs.map { display in ("\(display.name) \(display.adapterName)", { DataManager.model.output = display.id; CParsec.updateHostVideoConfig() }) }; showChoices(title: "Display", source: sender, choices: choices) }
     private func showChoices(title: String, source: UIView, choices: [(String, () -> Void)]) { let sheet = UIAlertController(title: title, message: nil, preferredStyle: .actionSheet); choices.forEach { name, action in sheet.addAction(UIAlertAction(title: name, style: .default) { _ in action() }) }; sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel)); if let popover = sheet.popoverPresentationController { popover.sourceView = source; popover.sourceRect = source.bounds }; present(sheet, animated: true) }
     private func getHostData() { let data = Data(); CParsec.sendUserData(type: .getVideoConfig, message: data); CParsec.sendUserData(type: .getAdapterInfo, message: data) }
     private func updateDeviceNativeResolution() { let screen = view.window?.screen ?? UIScreen.main; let bounds = view.bounds.isEmpty ? screen.bounds : view.bounds; ParsecResolution.updateClientResolution(width: Int(bounds.width * screen.nativeScale), height: Int(bounds.height * screen.nativeScale)) }
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) { super.viewWillTransition(to: size, with: coordinator); coordinator.animate(alongsideTransition: nil) { [weak self] _ in guard let self = self else { return }; self.updateDeviceNativeResolution(); if SettingsHandler.resolution == .client { DataManager.model.resolutionX = SettingsHandler.resolution.width; DataManager.model.resolutionY = SettingsHandler.resolution.height; CParsec.updateHostVideoConfig(); self.getHostData() } } }
-    private func updateMetrics() { var status = ParsecClientStatus(); guard CParsec.getStatusEx(&status) == PARSEC_OK else { return }; let decoder = status.decoder.0; let feedback = DataManager.model.resolutionFeedback.map { "\n\($0)" } ?? ""; metrics.text = String(format: "Decode %.2f ms\nNetwork %.2f ms\n%.2f Mbps\nActual %d x %d %@%@", status.`self`.metrics.0.decodeLatency, status.`self`.metrics.0.networkLatency, status.`self`.metrics.0.bitrate, decoder.width, decoder.height, decoder.h265 ? "H.265" : "H.264", feedback) }
-    @objc private func checkStatus() { var status = ParsecClientStatus(); let value = CParsec.getStatusEx(&status); if value != PARSEC_OK { disconnectWithMessage("Disconnected (code \(value.rawValue))") } else if !menu.isHidden { updateMetrics() } }
+    private func updateMetrics(_ status: ParsecClientStatus? = nil) {
+        var current = status ?? ParsecClientStatus(); if status == nil && CParsec.getStatusEx(&current) != PARSEC_OK { return }
+        var decoder = current.decoder.0
+        let decoderName = String.fromBuffer(&decoder.name.0, length: 16).trimmingCharacters(in: .controlCharacters)
+        let metric = current.`self`.metrics.0
+        let feedback = DataManager.model.resolutionFeedback.map { "\n\($0)" } ?? ""
+        metrics.text = String(format: "Decode %.2f ms  Encode %.2f ms\nNetwork %.2f ms  %.2f Mbps\nQueue %u  Retransmit %u/%u\nActual %d x %d %@ %@\n%@%@", metric.decodeLatency, metric.encodeLatency, metric.networkLatency, metric.bitrate, metric.queuedFrames, metric.fastRTs, metric.slowRTs, decoder.width, decoder.height, decoder.h265 ? "H.265" : "H.264", decoderName, adaptiveQuality.stateText, feedback)
+    }
+    @objc private func checkStatus() {
+        var status = ParsecClientStatus(); let value = CParsec.getStatusEx(&status)
+        if value != PARSEC_OK { disconnectWithMessage("Disconnected (code \(value.rawValue))"); return }
+        adaptiveQuality.sample(status: status) { resolution, bitrate in
+            if let bitrate = bitrate { SettingsHandler.bitrate = bitrate; DataManager.model.bitrate = bitrate }
+            if let resolution = resolution {
+                SettingsHandler.resolution = resolution; DataManager.model.resolutionX = resolution.width; DataManager.model.resolutionY = resolution.height
+                self.coordinator.companion.setMode(width: resolution.width, height: resolution.height) { applied in DataManager.model.resolutionFeedback = applied ? "Companion applied \(resolution.desc)" : "macOS requires a paired OpenParsec Host Companion" }
+            }
+            CParsec.updateHostVideoConfig()
+        }
+        if !menu.isHidden { updateMetrics(status) }
+    }
     @objc private func backgroundDisconnect() { if #available(iOS 15, *), PictureInPictureManager.shared.isPiPActive { return }; ParsecBackgroundManager.shared.markForReconnect(); disconnectInternal() }
     @objc private func disconnect() { ParsecBackgroundManager.shared.disableAutoReconnect(); disconnectInternal() }
     private func disconnectWithMessage(_ text: String) { timer?.invalidate(); let prompt = UIAlertController(title: text, message: nil, preferredStyle: .alert); prompt.addAction(UIAlertAction(title: "Close", style: .default) { [weak self] _ in self?.disconnectInternal() }); present(prompt, animated: true) }

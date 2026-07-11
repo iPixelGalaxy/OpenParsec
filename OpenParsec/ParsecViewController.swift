@@ -63,6 +63,7 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate {
 	}
 
 	func updateImage() {
+		if CompanionRuntime.cursorCaptured { u?.image = nil; return }
         // Optimization: Snap current valus
         let currentMouseX = CParsec.mouseInfo.mouseX
         let currentMouseY = CParsec.mouseInfo.mouseY

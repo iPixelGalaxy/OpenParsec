@@ -2,9 +2,16 @@
 
 OpenParsec is a simple, open-source Parsec client for iOS/iPadOS written in Swift using UIKit and the Parsec SDK. The app supports arm64 devices running iOS 12.0 or later.
 
-## Cursor visibility
+## Mac host companion
 
-OpenParsec tracks cursor movement initiated by the iOS client and the position reported by the Parsec SDK when leaving relative mouse mode. The pinned SDK does not continuously report cursor coordinates for mouse movement performed locally on the host. To see host-local movement, configure the host to capture its cursor in the video stream. Independent host-local cursor mirroring would require a future host companion application.
+macOS does not allow a Parsec client to change the captured display resolution, and the pinned SDK does not continuously report cursor movement originating on the host. Install `OpenParsecHost.app` on the Mac to solve both limitations:
+
+1. Download `OpenParsecHost.zip`, move the app to Applications, and open it. If Gatekeeper blocks the ad-hoc build, right-click the app and choose Open.
+2. Keep the iPad and Mac on the same local network. Prefer 5 GHz Wi-Fi or connect the Mac by Ethernet.
+3. In OpenParsec's host list, tap **Pair Mac**, then enter the six-digit code shown in the Mac menu-bar item.
+4. Connect normally. The companion selects a real low-resolution 60 Hz Mac display mode before Parsec starts and draws a capture-visible cursor for movement originating on either device.
+
+The first-generation iPad Air profile starts with H.264 hardware decoding, 1920×1200, 60 FPS, and 10 Mbps. It samples decode, encode, queue, retransmission, and network metrics, reducing bitrate or resolution when the 60 FPS frame budget cannot be maintained. The optimized Mac display mode remains active after disconnect; use the companion menu to restore the original Retina mode manually.
 
 This project is still a major WIP, so apologies for the currently lackluster documentation. I'm also very new to both Swift and SwiftUI so I'm sure there are many places for improvement.
 

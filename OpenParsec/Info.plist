@@ -40,6 +40,12 @@
     </string>
     <key>LSRequiresIPhoneOS</key>
     <true />
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>OpenParsec uses the local network to pair with the optional Mac host companion for resolution and cursor control.</string>
+    <key>NSBonjourServices</key>
+    <array>
+      <string>_openparsec._tcp</string>
+    </array>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true />
     <key>UIBackgroundModes</key>

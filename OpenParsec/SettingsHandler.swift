@@ -23,4 +23,6 @@ struct SettingsHandler {
     static var savedZoomEnabled: Bool { get { defaults.bool(forKey: "savedZoomEnabled") } set { defaults.set(newValue, forKey: "savedZoomEnabled") } }
     static var savedConstantFps: Bool { get { defaults.bool(forKey: "savedConstantFps") } set { defaults.set(newValue, forKey: "savedConstantFps") } }
     static var savedMuted: Bool { get { defaults.bool(forKey: "savedMuted") } set { defaults.set(newValue, forKey: "savedMuted") } }
+    static var legacyIPadAutoTune: Bool { get { defaults.object(forKey: "legacyIPadAutoTune") == nil ? true : defaults.bool(forKey: "legacyIPadAutoTune") } set { defaults.set(newValue, forKey: "legacyIPadAutoTune") } }
+    static var companionCursorEnabled: Bool { get { defaults.bool(forKey: "companionCursorEnabled") } set { defaults.set(newValue, forKey: "companionCursorEnabled") } }
 }
