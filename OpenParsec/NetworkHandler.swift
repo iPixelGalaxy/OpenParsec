@@ -7,7 +7,7 @@ struct ErrorInfo: Decodable {
 //	var codes:Array
 }
 
-struct ClientInfo: Decodable {
+struct ClientInfo: Codable {
 	var instance_id: String
 	var user_id: Int
 	var session_id: String
